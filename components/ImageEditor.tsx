@@ -335,12 +335,12 @@ const ImageEditor = () => {
             <CardTitle className="flex items-center gap-2 text-xl">
               {activeTab === "edit" ? (
                 <>
-                  <Upload className="w-5 h-5 text-indigo-500" />
+                  <Upload className="w-5 h-5" />
                   Upload & Edit
                 </>
               ) : (
                 <>
-                  <Wand2 className="w-5 h-5 text-indigo-500" />
+                  <Wand2 className="w-5 h-5" />
                   Generate Image
                 </>
               )}
@@ -417,8 +417,8 @@ const ImageEditor = () => {
                     {...getRootProps()}
                     className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all ${
                       isDragActive
-                        ? "border-indigo-500 bg-indigo-500/10 scale-[0.99]"
-                        : "border-border hover:border-indigo-500/50 hover:bg-muted/40"
+                        ? "border-primary bg-primary/5 scale-[0.99]"
+                        : "border-border hover:border-primary/40 hover:bg-muted/40"
                     }`}
                   >
                     <input {...getInputProps()} />
@@ -442,9 +442,9 @@ const ImageEditor = () => {
               </TabsContent>
 
               <TabsContent value="generate" className="space-y-4 mt-6">
-                <div className="rounded-xl p-6 text-center border border-dashed border-indigo-500/30 bg-gradient-to-br from-indigo-500/5 via-purple-500/5 to-pink-500/5">
+                <div className="rounded-xl p-6 text-center border border-dashed border-border bg-muted/20">
                   <div className="space-y-3">
-                    <div className="inline-flex p-3 rounded-2xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400">
+                    <div className="inline-flex p-3 rounded-2xl bg-muted text-foreground">
                       <Sparkles className="w-6 h-6" />
                     </div>
                     <div>
@@ -459,7 +459,7 @@ const ImageEditor = () => {
                 </div>
 
                 <div className="bg-muted/40 border border-border/60 p-3.5 rounded-lg flex items-center gap-3">
-                  <div className="p-2 rounded-lg bg-indigo-500/10 text-indigo-600 dark:text-indigo-400">
+                  <div className="p-2 rounded-lg bg-muted text-foreground">
                     <Wand2 className="w-4 h-4" />
                   </div>
                   <div className="text-xs">
@@ -490,7 +490,7 @@ const ImageEditor = () => {
                         setActiveTab("generate");
                       }
                     }}
-                    className="text-[11px] font-medium px-2.5 py-1 rounded-full border border-border/80 bg-muted/40 hover:bg-muted hover:border-indigo-500/50 transition-all text-muted-foreground hover:text-foreground cursor-pointer"
+                    className="text-[11px] font-medium px-2.5 py-1 rounded-full border border-border/80 bg-muted/40 hover:bg-muted hover:border-foreground/30 transition-all text-muted-foreground hover:text-foreground cursor-pointer"
                   >
                     {chip.label}
                   </button>
@@ -507,7 +507,7 @@ const ImageEditor = () => {
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
                 rows={3}
-                className="resize-none text-sm focus-visible:ring-indigo-500"
+                className="resize-none text-sm focus-visible:ring-ring"
               />
             </div>
 
@@ -520,7 +520,7 @@ const ImageEditor = () => {
                 (activeTab === "generate" && !prompt.trim()) ||
                 isProcessing
               }
-              className="w-full bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 text-white shadow-md shadow-indigo-500/20 font-semibold"
+              className="w-full bg-primary text-primary-foreground hover:bg-primary/90 font-medium shadow-sm"
               size="lg"
             >
               {isProcessing ? (
@@ -565,7 +565,7 @@ const ImageEditor = () => {
         <Card className="border-border/60 shadow-sm hover:shadow-md transition-shadow backdrop-blur-sm bg-card/95 flex flex-col">
           <CardHeader className="flex flex-row items-center justify-between pb-4">
             <CardTitle className="flex items-center gap-2 text-xl">
-              <ImageIcon className="w-5 h-5 text-indigo-500" />
+              <ImageIcon className="w-5 h-5 text-foreground" />
               <span>Results</span>
               <Badge variant="secondary" className="ml-1 text-xs px-2 py-0.5 rounded-full font-mono font-medium">
                 {results.length}
@@ -602,14 +602,14 @@ const ImageEditor = () => {
                 {results.map((result, index) => (
                   <div
                     key={result.id || index}
-                    className="border border-border/70 rounded-xl p-4 space-y-3.5 bg-background/50 hover:border-indigo-500/40 transition-colors"
+                    className="border border-border/70 rounded-xl p-4 space-y-3.5 bg-background/50 hover:border-foreground/30 transition-colors"
                   >
                     {/* Header info & Delete */}
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <Badge
                           variant="secondary"
-                          className="text-[11px] font-medium px-2 py-0.5 bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-none"
+                          className="text-[11px] font-medium px-2 py-0.5 bg-muted text-foreground border-none"
                         >
                           {result.type === "generate" ? (
                             <>
