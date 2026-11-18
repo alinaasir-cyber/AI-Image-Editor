@@ -9,17 +9,54 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
-import { Upload, Wand2, Sparkles, X, Trash2, ImageIcon, Loader2, Paintbrush, Download, Copy } from "lucide-react";
+import {
+  Upload,
+  Wand2,
+  Sparkles,
+  X,
+  Trash2,
+  ImageIcon,
+  Loader2,
+  Paintbrush,
+  Download,
+  Copy,
+  Maximize2,
+  ExternalLink,
+} from "lucide-react";
 import { useDropzone } from "react-dropzone";
 import { toast } from "sonner";
 
 interface EditResult {
+  id?: number | string;
   url: string;
   prompt?: string;
   timestamp: number;
   type: string;
   imageCount?: number;
 }
+
+const quickPrompts = [
+  {
+    label: "🤖 3D Robot",
+    text: "A Pixar-style 3D rendered character of a cute small robot with big expressive glowing eyes, octane render, 8k",
+  },
+  {
+    label: "🦁 Majestic Lion",
+    text: "Majestic male lion standing on a rock cliff in savanna at golden hour, volumetric lighting, ultra-realistic",
+  },
+  {
+    label: "🏎️ Cyberpunk Car",
+    text: "Futuristic sports car speeding through a neon-lit cyberpunk city at night with rain reflections, 8k",
+  },
+  {
+    label: "🌅 Sunset Ocean",
+    text: "Breathtaking panoramic sunset over a calm turquoise ocean with gentle waves and pink golden clouds",
+  },
+  {
+    label: "💼 Business Suit",
+    text: "Professional handsome man in a tailored dark navy suit in a modern glass office, ultra-realistic portrait",
+  },
+];
 
 const ImageEditor = () => {
   const [activeTab, setActiveTab] = useState("edit");
@@ -31,13 +68,20 @@ const ImageEditor = () => {
   const [results, setResults] = useState<EditResult[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
 
-  // Load saved results from localStorage on mount
+  // Fullscreen Preview Modal State
+  const [previewModal, setPreviewModal] = useState<{
+    url: string;
+    prompt?: string;
+  } | null>(null);
+
+  // Load saved results from localStorage & Neon Database on mount
   useEffect(() => {
+    // 1. Instant local load
     try {
       const saved = localStorage.getItem("ai_image_editor_results");
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
+        if (Array.isArray(parsed) && parsed.length > 0) {
           setResults(parsed);
         }
       }
@@ -46,6 +90,27 @@ const ImageEditor = () => {
     } finally {
       setIsLoaded(true);
     }
+
+    // 2. Fetch from Neon Database to keep in sync
+    fetch("/api/history")
+      .then((res) => (res.ok ? res.json() : { history: [] }))
+      .then((data) => {
+        if (Array.isArray(data.history) && data.history.length > 0) {
+          const dbResults: EditResult[] = data.history.map((item: any) => ({
+            id: item.id,
+            url: item.url,
+            prompt: item.prompt,
+            timestamp: new Date(item.created_at).getTime() || Date.now(),
+            type: item.type || "generate",
+          }));
+          setResults((prev) => {
+            const urls = new Set(prev.map((r) => r.url));
+            const fresh = dbResults.filter((r) => !urls.has(r.url));
+            return [...prev, ...fresh];
+          });
+        }
+      })
+      .catch((err) => console.log("DB sync fallback:", err));
   }, []);
 
   // Persist results to localStorage whenever they change
@@ -72,10 +137,34 @@ const ImageEditor = () => {
     setSelectedImages([]);
   };
 
+  const handleDeleteResult = async (indexToDelete: number, resultId?: number | string) => {
+    setResults((prev) => prev.filter((_, i) => i !== indexToDelete));
+    toast.success("Image removed from results");
+    if (resultId) {
+      try {
+        await fetch(`/api/history?id=${resultId}`, { method: "DELETE" });
+      } catch (err) {
+        console.error("Failed to delete from DB", err);
+      }
+    }
+  };
+
+  const handleClearAllResults = async () => {
+    setResults([]);
+    toast.success("All results cleared");
+    try {
+      await fetch("/api/history", { method: "DELETE" });
+    } catch (err) {
+      console.error("Failed to clear DB", err);
+    }
+  };
+
   const handleDownload = async (url: string, filename: string) => {
     try {
       // Use internal proxy route to bypass browser CORS restrictions
-      const proxyUrl = `/api/download?url=${encodeURIComponent(url)}&filename=${encodeURIComponent(filename)}`;
+      const proxyUrl = `/api/download?url=${encodeURIComponent(
+        url
+      )}&filename=${encodeURIComponent(filename)}`;
       const response = await fetch(proxyUrl);
       if (!response.ok) throw new Error("Proxy download failed");
       const blob = await response.blob();
@@ -179,10 +268,10 @@ const ImageEditor = () => {
       if (!response.ok) {
         throw new Error(data.error || "Failed to process image");
       }
-      console.log(data);
 
       if (data.success && data.output) {
         const newResult: EditResult = {
+          id: Date.now(),
           url: data.output,
           prompt: prompt.trim(),
           timestamp: Date.now(),
@@ -234,79 +323,85 @@ const ImageEditor = () => {
     },
     multiple: true,
     onDrop,
-    maxFiles: 5, // 5 images
-    maxSize: 10 * 1024 * 1024, // 10MB
+    maxFiles: 5,
   });
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6">
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Upload and Controls */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Upload className="w-5 h-5" />
-              {activeTab === "edit" ? "Upload & Edit" : "Generate Image"}
+    <div className="w-full">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
+        {/* Editor Controls Card */}
+        <Card className="border-border/60 shadow-sm hover:shadow-md transition-shadow backdrop-blur-sm bg-card/95">
+          <CardHeader className="pb-4">
+            <CardTitle className="flex items-center gap-2 text-xl">
+              {activeTab === "edit" ? (
+                <>
+                  <Upload className="w-5 h-5 text-indigo-500" />
+                  Upload & Edit
+                </>
+              ) : (
+                <>
+                  <Wand2 className="w-5 h-5 text-indigo-500" />
+                  Generate Image
+                </>
+              )}
             </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-4">
+
+          <CardContent className="space-y-6">
             <Tabs
+              defaultValue="edit"
               value={activeTab}
-              onValueChange={(val) => setActiveTab(val as string)}
+              onValueChange={setActiveTab}
               className="w-full"
             >
-              {/* Tab List */}
-              <TabsList className="grid w-full grid-cols-2">
-                <TabsTrigger value="edit" className="flex items-center gap-2">
+              <TabsList className="grid w-full grid-cols-2 p-1 bg-muted/60">
+                <TabsTrigger
+                  value="edit"
+                  className="flex items-center gap-2 data-[state=active]:bg-background data-[state=active]:shadow-sm"
+                >
                   <Upload className="w-4 h-4" />
                   Upload & Edit
                 </TabsTrigger>
-                <TabsTrigger value="generate" className="flex items-center gap-2">
-                  <Wand2 className="w-4 h-4" />
+                <TabsTrigger
+                  value="generate"
+                  className="flex items-center gap-2 data-[state=active]:bg-background data-[state=active]:shadow-sm"
+                >
+                  <Sparkles className="w-4 h-4" />
                   Generate Image
                 </TabsTrigger>
               </TabsList>
 
-              {/* Upload & Edit Tab Content */}
-              <TabsContent value="edit" className="space-y-6 mt-6">
+              <TabsContent value="edit" className="space-y-4 mt-6">
                 {imagePreviews.length > 0 ? (
                   <div className="space-y-4">
-                    {/* Grid layout for multiple images */}
-                    <div
-                      className={`grid gap-3 ${imagePreviews.length === 1
-                          ? "grid-cols-1"
-                          : imagePreviews.length === 2
-                            ? "grid-cols-2"
-                            : "grid-cols-2 md:grid-cols-3"
-                        }`}
-                    >
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                       {imagePreviews.map((preview, index) => (
-                        <div key={index} className="relative group">
+                        <div
+                          key={index}
+                          className="relative aspect-square rounded-lg overflow-hidden border border-border/80 group"
+                        >
                           <Image
                             src={preview}
                             alt={`Preview ${index + 1}`}
-                            width={150}
-                            height={150}
-                            className="w-full h-32 object-cover rounded-lg border"
+                            fill
+                            className="object-cover"
                           />
-                          <div className="absolute top-1 right-1 bg-black/70 text-white text-xs px-1.5 py-0.5 rounded">
-                            {index + 1}
-                          </div>
                           <button
                             type="button"
                             onClick={() => removeImage(index)}
-                            className="absolute top-1 left-1 bg-red-600/80 hover:bg-red-700 text-white rounded-full p-1 transition-colors"
-                            title="Remove image"
+                            className="absolute top-1.5 right-1.5 p-1 rounded-full bg-black/60 text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black/80"
                           >
                             <X className="w-3.5 h-3.5" />
                           </button>
+                          <div className="absolute bottom-1 right-1 bg-black/60 text-white text-[10px] px-1.5 py-0.5 rounded font-mono">
+                            {index + 1}
+                          </div>
                         </div>
                       ))}
                     </div>
 
-                    <div className="flex justify-end pt-1">
+                    <div className="flex justify-end">
                       <Button
-                        type="button"
                         variant="outline"
                         size="sm"
                         onClick={clearAllImages}
@@ -320,64 +415,99 @@ const ImageEditor = () => {
                 ) : (
                   <div
                     {...getRootProps()}
-                    className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${isDragActive
-                        ? "border-primary bg-primary/10"
-                        : "border-muted-foreground/25 hover:border-primary/50"
-                      }`}
+                    className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all ${
+                      isDragActive
+                        ? "border-indigo-500 bg-indigo-500/10 scale-[0.99]"
+                        : "border-border hover:border-indigo-500/50 hover:bg-muted/40"
+                    }`}
                   >
                     <input {...getInputProps()} />
-                    <div className="flex flex-col items-center justify-center gap-2">
-                      <ImageIcon className="w-10 h-10 text-muted-foreground" />
-                      <p className="text-sm font-medium text-muted-foreground">
-                        {isDragActive ? "Drop images here..." : "Drag & drop images"}
-                      </p>
+                    <div className="flex flex-col items-center justify-center gap-2.5">
+                      <div className="p-3 rounded-full bg-muted/60 text-muted-foreground">
+                        <ImageIcon className="w-6 h-6" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold text-foreground">
+                          {isDragActive
+                            ? "Drop your images here"
+                            : "Click to upload or drag & drop"}
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          PNG, JPG, WEBP up to 5 images
+                        </p>
+                      </div>
                     </div>
                   </div>
                 )}
               </TabsContent>
 
-              <TabsContent value="generate" className="space-y-6 mt-6">
-                {/* Generation Preview */}
-                <div className="border-2 border-dashed rounded-lg p-8 text-center bg-gradient-to-br from-primary/5 to-secondary/5">
-                  <div className="space-y-4">
-                    <Sparkles className="w-12 h-12 mx-auto text-primary" />
+              <TabsContent value="generate" className="space-y-4 mt-6">
+                <div className="rounded-xl p-6 text-center border border-dashed border-indigo-500/30 bg-gradient-to-br from-indigo-500/5 via-purple-500/5 to-pink-500/5">
+                  <div className="space-y-3">
+                    <div className="inline-flex p-3 rounded-2xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400">
+                      <Sparkles className="w-6 h-6" />
+                    </div>
                     <div>
-                      <p className="text-lg font-medium">AI Image Generation</p>
-                      <p className="text-sm text-muted-foreground">
-                        Describe what you want to create and AI will generate it
+                      <p className="text-base font-semibold text-foreground">
+                        AI Text-to-Image Studio
+                      </p>
+                      <p className="text-xs text-muted-foreground max-w-sm mx-auto mt-1">
+                        Describe what you want to create and our engine will generate high-resolution visual art.
                       </p>
                     </div>
                   </div>
                 </div>
 
-                {/* Model Info for Generation */}
-                <div className="bg-muted/50 p-4 rounded-lg">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Sparkles className="w-4 h-4 text-primary" />
-                    <span className="font-medium">Google Gemini 2.5 Flash</span>
+                <div className="bg-muted/40 border border-border/60 p-3.5 rounded-lg flex items-center gap-3">
+                  <div className="p-2 rounded-lg bg-indigo-500/10 text-indigo-600 dark:text-indigo-400">
+                    <Wand2 className="w-4 h-4" />
                   </div>
-                  <p className="text-sm text-muted-foreground">
-                    Advanced AI model for generating high-quality, realistic images from text descriptions.
-                  </p>
+                  <div className="text-xs">
+                    <p className="font-semibold text-foreground">High-Speed Cloud Inference</p>
+                    <p className="text-muted-foreground">Real-time processing with automated prompt enhancement</p>
+                  </div>
                 </div>
               </TabsContent>
             </Tabs>
 
-            {/* Prompt Input */}
-            <div className="space-y-2">
-              <Label htmlFor="prompt">
-                {activeTab === "edit" ? "Editing Prompt" : "Generation Prompt"}
-              </Label>
+            {/* Quick Suggestions Chips */}
+            <div className="space-y-2.5">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="prompt" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  {activeTab === "edit" ? "Editing Prompt" : "Generation Prompt"}
+                </Label>
+                <span className="text-[11px] text-muted-foreground/80">Try an example:</span>
+              </div>
+
+              <div className="flex flex-wrap gap-1.5 pb-1">
+                {quickPrompts.map((chip, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => {
+                      setPrompt(chip.text);
+                      if (activeTab === "edit" && selectedImages.length === 0) {
+                        setActiveTab("generate");
+                      }
+                    }}
+                    className="text-[11px] font-medium px-2.5 py-1 rounded-full border border-border/80 bg-muted/40 hover:bg-muted hover:border-indigo-500/50 transition-all text-muted-foreground hover:text-foreground cursor-pointer"
+                  >
+                    {chip.label}
+                  </button>
+                ))}
+              </div>
+
               <Textarea
                 id="prompt"
                 placeholder={
                   activeTab === "edit"
-                    ? "Describe how you want to edit the image..."
-                    : "Describe what you want to generate in detail..."
+                    ? "e.g. Turn into a majestic lion standing on a cliff..."
+                    : "e.g. A futuristic sports car speeding through a cyberpunk city with neon lights..."
                 }
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
-                rows={4}
+                rows={3}
+                className="resize-none text-sm focus-visible:ring-indigo-500"
               />
             </div>
 
@@ -390,126 +520,156 @@ const ImageEditor = () => {
                 (activeTab === "generate" && !prompt.trim()) ||
                 isProcessing
               }
-              className="w-full"
+              className="w-full bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 text-white shadow-md shadow-indigo-500/20 font-semibold"
               size="lg"
             >
               {isProcessing ? (
                 <>
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Processing...
+                  Processing Visual Art...
+                </>
+              ) : activeTab === "edit" ? (
+                <>
+                  <Paintbrush className="w-4 h-4 mr-2" />
+                  Edit {selectedImages.length > 0 ? `${selectedImages.length} Image(s)` : "Image"}
                 </>
               ) : (
                 <>
-                  {activeTab === "edit" ? (
-                    <>
-                      <Wand2 className="w-4 h-4 mr-2" />
-                      Edit{" "}
-                      {selectedImages.length > 0
-                        ? `${selectedImages.length} Image(s)`
-                        : "Images"}
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles className="w-4 h-4 mr-2" />
-                      Generate Image
-                    </>
-                  )}
+                  <Sparkles className="w-4 h-4 mr-2" />
+                  Generate Image
                 </>
               )}
             </Button>
 
             {/* Progress Bar */}
             {isProcessing && (
-              <div className="space-y-2">
-                <Progress value={progress} className="w-full" />
-                <p className="text-sm text-muted-foreground text-center">
-                  {progress < 30
-                    ? "Uploading image..."
-                    : progress < 60
-                      ? "Processing with nano-banana..."
-                      : progress < 90
-                        ? "Generating result..."
-                        : "Almost done..."}
+              <div className="space-y-2 pt-2">
+                <div className="flex justify-between text-xs text-muted-foreground">
+                  <span>Inference Progress</span>
+                  <span>{progress}%</span>
+                </div>
+                <Progress value={progress} className="h-2" />
+                <p className="text-xs text-center text-muted-foreground animate-pulse">
+                  {progress < 40
+                    ? "Initializing AI model..."
+                    : progress < 80
+                    ? "Synthesizing pixels..."
+                    : "Finalizing high-res output..."}
                 </p>
               </div>
             )}
           </CardContent>
         </Card>
 
-        {/* Results Card */}
-        <Card className="flex flex-col">
-          <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle className="flex items-center gap-2">
-              <ImageIcon className="w-5 h-5" />
-              Results ({results.length})
+        {/* Results Showcase Card */}
+        <Card className="border-border/60 shadow-sm hover:shadow-md transition-shadow backdrop-blur-sm bg-card/95 flex flex-col">
+          <CardHeader className="flex flex-row items-center justify-between pb-4">
+            <CardTitle className="flex items-center gap-2 text-xl">
+              <ImageIcon className="w-5 h-5 text-indigo-500" />
+              <span>Results</span>
+              <Badge variant="secondary" className="ml-1 text-xs px-2 py-0.5 rounded-full font-mono font-medium">
+                {results.length}
+              </Badge>
             </CardTitle>
             {results.length > 0 && (
               <Button
-                variant="outline"
+                variant="ghost"
                 size="sm"
-                onClick={() => setResults([])}
+                onClick={handleClearAllResults}
+                className="text-xs text-destructive hover:text-destructive hover:bg-destructive/10"
               >
-                <Trash2 className="w-4 h-4 mr-1" />
-                Clear
+                <Trash2 className="w-3.5 h-3.5 mr-1" />
+                Clear All
               </Button>
             )}
           </CardHeader>
 
           <CardContent className="flex-1 overflow-hidden">
             {results.length === 0 ? (
-              <div className="text-center py-12 text-muted-foreground">
-                <ImageIcon className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                <p>No results yet</p>
-                <p className="text-sm">
-                  Upload images and process them to see results here
-                </p>
+              <div className="text-center py-16 px-4 text-muted-foreground space-y-3">
+                <div className="w-16 h-16 mx-auto rounded-2xl bg-muted/50 flex items-center justify-center text-muted-foreground/60 border border-border/50">
+                  <ImageIcon className="w-8 h-8 opacity-60" />
+                </div>
+                <div className="space-y-1">
+                  <p className="font-semibold text-foreground text-sm">No artwork generated yet</p>
+                  <p className="text-xs max-w-xs mx-auto text-muted-foreground">
+                    Upload an image to edit or choose a quick prompt to generate high-resolution art.
+                  </p>
+                </div>
               </div>
             ) : (
-              <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2">
+              <div className="space-y-5 max-h-[680px] overflow-y-auto pr-2">
                 {results.map((result, index) => (
-                  <div key={index} className="border rounded-lg p-4 space-y-3">
+                  <div
+                    key={result.id || index}
+                    className="border border-border/70 rounded-xl p-4 space-y-3.5 bg-background/50 hover:border-indigo-500/40 transition-colors"
+                  >
+                    {/* Header info & Delete */}
                     <div className="flex items-center justify-between">
-                      <Badge variant="secondary">
-                        {result.type === "generate" ? (
-                          <>
-                            <Sparkles className="w-3 h-3 mr-1" />
-                            Generated
-                          </>
-                        ) : (
-                          <>
-                            <Paintbrush className="w-3 h-3 mr-1" />
-                            {result.imageCount} Image
-                            {result.imageCount && result.imageCount > 1
-                              ? "s"
-                              : ""}{" "}
-                            Edited
-                          </>
-                        )}
-                      </Badge>
-                      <span className="text-xs text-muted-foreground">
-                        {new Date(result.timestamp).toLocaleTimeString()}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <Badge
+                          variant="secondary"
+                          className="text-[11px] font-medium px-2 py-0.5 bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-none"
+                        >
+                          {result.type === "generate" ? (
+                            <>
+                              <Sparkles className="w-3 h-3 mr-1 inline" />
+                              Generated
+                            </>
+                          ) : (
+                            <>
+                              <Paintbrush className="w-3 h-3 mr-1 inline" />
+                              Edited
+                            </>
+                          )}
+                        </Badge>
+                        <span className="text-[11px] text-muted-foreground font-mono">
+                          {new Date(result.timestamp).toLocaleTimeString()}
+                        </span>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteResult(index, result.id)}
+                        className="text-muted-foreground/60 hover:text-destructive p-1 rounded-md transition-colors"
+                        title="Delete image"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
                     </div>
 
-                    {/* Result Image */}
+                    {/* Result Image with Zoom on Click */}
                     {result.url && (
-                      <div className="relative w-full rounded-lg overflow-hidden border bg-muted/30 flex items-center justify-center">
+                      <div
+                        onClick={() =>
+                          setPreviewModal({
+                            url: result.url,
+                            prompt: result.prompt,
+                          })
+                        }
+                        className="group relative w-full rounded-lg overflow-hidden border border-border/60 bg-muted/30 flex items-center justify-center cursor-zoom-in"
+                        title="Click to view fullscreen"
+                      >
                         <img
                           src={result.url}
                           alt={result.prompt || "Result"}
-                          className="w-full h-auto max-h-[480px] object-contain rounded-md"
+                          className="w-full h-auto max-h-[460px] object-contain rounded-md transition-transform duration-300 group-hover:scale-[1.01]"
                           referrerPolicy="no-referrer"
                         />
+                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 text-white text-xs font-medium backdrop-blur-[2px]">
+                          <Maximize2 className="w-4 h-4" />
+                          <span>View Fullscreen</span>
+                        </div>
                       </div>
                     )}
 
                     {/* Prompt Details */}
                     {result.prompt && (
-                      <div className="space-y-1.5">
-                        <p className="text-sm font-semibold text-foreground">
+                      <div className="space-y-1">
+                        <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                           Prompt:
                         </p>
-                        <div className="bg-muted/40 border rounded-md p-2.5 text-xs text-muted-foreground">
+                        <div className="bg-muted/40 border border-border/60 rounded-md p-2.5 text-xs text-foreground/90 leading-relaxed font-sans">
                           {result.prompt}
                         </div>
                       </div>
@@ -523,21 +683,21 @@ const ImageEditor = () => {
                         onClick={() =>
                           handleDownload(
                             result.url,
-                            `generated-${index + 1}.png`
+                            `pixelai-${index + 1}.png`
                           )
                         }
-                        className="flex-1"
+                        className="flex-1 text-xs gap-1.5"
                       >
-                        <Download className="w-3 h-3 mr-1" />
+                        <Download className="w-3.5 h-3.5" />
                         Download
                       </Button>
                       <Button
                         size="sm"
                         variant="outline"
                         onClick={() => copyToClipboard(result.url)}
-                        className="flex-1"
+                        className="flex-1 text-xs gap-1.5"
                       >
-                        <Copy className="w-3 h-3 mr-1" />
+                        <Copy className="w-3.5 h-3.5" />
                         Copy URL
                       </Button>
                     </div>
@@ -548,6 +708,70 @@ const ImageEditor = () => {
           </CardContent>
         </Card>
       </div>
+
+      {/* Fullscreen Image Preview Lightbox Modal */}
+      {previewModal && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-4 animate-in fade-in duration-200"
+          onClick={() => setPreviewModal(null)}
+        >
+          <div
+            className="relative max-w-4xl w-full max-h-[90vh] flex flex-col items-center justify-center space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Close Button */}
+            <button
+              type="button"
+              onClick={() => setPreviewModal(null)}
+              className="absolute -top-10 right-0 p-2 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors"
+            >
+              <X className="w-5 h-5" />
+              <span className="sr-only">Close</span>
+            </button>
+
+            {/* Modal Image */}
+            <div className="relative max-h-[75vh] w-full flex items-center justify-center overflow-hidden rounded-xl bg-black/40 border border-white/10">
+              <img
+                src={previewModal.url}
+                alt={previewModal.prompt || "Preview"}
+                className="max-h-[75vh] max-w-full object-contain rounded-xl"
+                referrerPolicy="no-referrer"
+              />
+            </div>
+
+            {/* Modal Footer Info */}
+            <div className="w-full flex flex-col sm:flex-row items-center justify-between gap-3 text-white text-xs px-2">
+              <p className="line-clamp-2 max-w-xl text-white/80 text-center sm:text-left">
+                {previewModal.prompt || "Generated Artwork"}
+              </p>
+              <div className="flex gap-2 shrink-0">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() =>
+                    handleDownload(previewModal.url, "artwork-full.png")
+                  }
+                  className="text-xs gap-1.5"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  Download
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => copyToClipboard(previewModal.url)}
+                  className="text-xs gap-1.5 bg-transparent border-white/20 text-white hover:bg-white/10 hover:text-white"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  Copy URL
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -20,3 +20,25 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ history: [] });
   }
 }
+
+export async function DELETE(request: NextRequest) {
+  if (!sql) {
+    return NextResponse.json({ success: true });
+  }
+
+  try {
+    const { searchParams } = new URL(request.url);
+    const id = searchParams.get("id");
+
+    if (id) {
+      await sql`DELETE FROM generated_images WHERE id = ${Number(id)}`;
+    } else {
+      await sql`DELETE FROM generated_images`;
+    }
+
+    return NextResponse.json({ success: true });
+  } catch (error: any) {
+    console.error("Failed to delete from Neon:", error);
+    return NextResponse.json({ error: "Failed to delete" }, { status: 500 });
+  }
+}
