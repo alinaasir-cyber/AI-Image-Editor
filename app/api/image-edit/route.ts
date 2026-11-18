@@ -1,10 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import Replicate from "replicate";
 import { saveGeneratedImage } from "@/lib/db";
-
-const replicate = new Replicate({
-  auth: process.env.REPLICATE_API_TOKEN,
-});
 
 function translateSomaliPrompt(prompt: string): string {
   const dictionary: [RegExp, string][] = [
@@ -64,67 +59,82 @@ function translateSomaliPrompt(prompt: string): string {
   return result.replace(/\s+/g, " ").trim();
 }
 
-async function fetchMatchingImage(prompt: string): Promise<string | null> {
-  try {
-    const translated = translateSomaliPrompt(prompt);
-    const clean =
-      translated
-        .replace(
-          /\b(give me|generate|create|an image of|a picture of|draw|show me|image of|turn into|make)\b/gi,
-          ""
-        )
-        .trim() || translated || prompt;
-    const q = encodeURIComponent(clean);
-    const tokenRes = await fetch(`https://duckduckgo.com/?q=${q}`, {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-      },
-    });
-    const html = await tokenRes.text();
-    const match = html.match(/vqd=([\"\']?)([\d-]+)\1/);
-    const vqd = match ? match[2] : null;
-    if (!vqd) return null;
+async function editWithHuggingFace(
+  imageBase64: string,
+  prompt: string
+): Promise<string | null> {
+  const hfToken = process.env.HUGGINGFACE_API_KEY;
+  if (!hfToken) return null;
 
-    const searchRes = await fetch(
-      `https://duckduckgo.com/i.js?l=us-en&o=json&q=${q}&vqd=${vqd}&f=,,,`,
+  try {
+    // Use an image-to-image model for editing
+    const response = await fetch(
+      "https://api-inference.huggingface.co/models/timbrooks/instruct-pix2pix",
       {
+        method: "POST",
         headers: {
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+          Authorization: `Bearer ${hfToken}`,
+          "Content-Type": "application/json",
         },
+        body: JSON.stringify({
+          inputs: {
+            image: imageBase64.replace(/^data:image\/\w+;base64,/, ""),
+            prompt: prompt,
+          },
+          parameters: {
+            image_guidance_scale: 1.5,
+            guidance_scale: 7.5,
+            num_inference_steps: 20,
+          },
+        }),
       }
     );
-    if (!searchRes.ok) return null;
 
-    const data = await searchRes.json();
-    const results = data.results || [];
-    const prioritized = results.filter((r: any) => {
-      const u = (r.image || "").toLowerCase();
-      return (
-        u.includes("freepik") ||
-        u.includes("vecteezy") ||
-        u.includes("unsplash") ||
-        u.includes("pexels") ||
-        u.includes("wikimedia") ||
-        u.includes("pixabay") ||
-        u.includes("pinimg") ||
-        u.includes("wallpaper")
-      );
-    });
-    const pool = prioritized.length > 0 ? prioritized : results;
-    const valid = pool.find(
-      (r: any) =>
-        r.image &&
-        (r.image.endsWith(".jpg") ||
-          r.image.endsWith(".jpeg") ||
-          r.image.endsWith(".png") ||
-          r.image.endsWith(".webp") ||
-          r.image.includes("jpg") ||
-          r.image.includes("png"))
-    );
-    return valid?.image || pool[0]?.image || null;
-  } catch (e) {
+    if (!response.ok) {
+      // If model loading, wait and retry
+      if (response.status === 503) {
+        console.log("InstructPix2Pix loading, waiting 20s...");
+        await new Promise((r) => setTimeout(r, 20000));
+        const retry = await fetch(
+          "https://api-inference.huggingface.co/models/timbrooks/instruct-pix2pix",
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${hfToken}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              inputs: {
+                image: imageBase64.replace(/^data:image\/\w+;base64,/, ""),
+                prompt: prompt,
+              },
+              parameters: {
+                image_guidance_scale: 1.5,
+                guidance_scale: 7.5,
+                num_inference_steps: 20,
+              },
+            }),
+          }
+        );
+        if (retry.ok) {
+          const blob = await retry.blob();
+          const buffer = Buffer.from(await blob.arrayBuffer());
+          const b64 = buffer.toString("base64");
+          const ct = retry.headers.get("content-type") || "image/jpeg";
+          return `data:${ct};base64,${b64}`;
+        }
+      }
+      console.warn("HF edit error:", response.status, await response.text());
+      return null;
+    }
+
+    const blob = await response.blob();
+    const buffer = Buffer.from(await blob.arrayBuffer());
+    const b64 = buffer.toString("base64");
+    const contentType = response.headers.get("content-type") || "image/jpeg";
+    return `data:${contentType};base64,${b64}`;
+  } catch (err) {
+    console.warn("HF edit failed:", err);
     return null;
   }
 }
@@ -140,55 +150,30 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const translated = translateSomaliPrompt(prompt);
+    const enhancedPrompt = translated || prompt;
+
     let outputUrl = "";
 
-    // 1. If Replicate token exists, try Replicate first
-    if (process.env.REPLICATE_API_TOKEN) {
-      try {
-        const input = {
-          prompt,
-          output_format: "jpg",
-          image_input: Array.isArray(image) ? image : [image],
-        };
-
-        const output = await replicate.run("google/gemini-2.5-flash-image", {
-          input: input,
-        });
-
-        if (typeof (output as any)?.url === "function") {
-          outputUrl = (output as any).url();
-        } else if (typeof (output as any)?.url === "string") {
-          outputUrl = (output as any).url;
-        } else if (Array.isArray(output) && output.length > 0) {
-          const first = output[0];
-          outputUrl =
-            typeof first === "string"
-              ? first
-              : typeof first?.url === "function"
-              ? first.url()
-              : first?.url || String(first);
-        } else if (typeof output === "string") {
-          outputUrl = output;
-        }
-      } catch (err) {
-        console.warn("Replicate error, falling back to matching engine:", err);
-      }
+    // 1. Try Hugging Face InstructPix2Pix for real AI editing
+    const sourceImage = Array.isArray(image) ? image[0] : image;
+    const hfResult = await editWithHuggingFace(sourceImage, enhancedPrompt);
+    if (hfResult) {
+      outputUrl = hfResult;
     }
 
-    // 2. Fetch high-quality image matching the exact prompt
+    // 2. If failed, return error
     if (!outputUrl) {
-      const matched = await fetchMatchingImage(prompt);
-      if (matched) {
-        outputUrl = matched;
-      }
+      return NextResponse.json(
+        {
+          error:
+            "Image editing failed. The AI model may be loading — please try again in 30 seconds.",
+        },
+        { status: 503 }
+      );
     }
 
-    // 3. Fallback to image preview or Unsplash
-    if (!outputUrl) {
-      outputUrl = Array.isArray(image) ? image[0] : image;
-    }
-
-    // 4. Save to Neon PostgreSQL Database
+    // 3. Save to Neon PostgreSQL Database
     await saveGeneratedImage(outputUrl, prompt, "edit");
 
     return NextResponse.json(
