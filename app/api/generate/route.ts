@@ -15,41 +15,41 @@ function translateSomaliPrompt(prompt: string): string {
     [/\bii dhis\b/gi, ""],
     [/\bi tus\b/gi, ""],
     [/\bi sii\b/gi, ""],
-    [/\blibaax\b/gi, "majestic lion"],
+    [/\blibaax\b/gi, "majestic lion in african savanna"],
     [/\bshabeel\b/gi, "tiger leopard"],
-    [/\byaxaas\b/gi, "crocodile"],
-    [/\bmaroodi\b/gi, "elephant"],
-    [/\bwaraabe\b/gi, "hyena"],
-    [/\bfaras\b/gi, "horse"],
+    [/\byaxaas\b/gi, "crocodile in water"],
+    [/\bmaroodi\b/gi, "huge elephant"],
+    [/\bwaraabe\b/gi, "hyena in the wild"],
+    [/\bfaras\b/gi, "black stallion horse running"],
     [/\bfarow\b/gi, "zebra"],
-    [/\bgeel\b/gi, "camel"],
-    [/\bbisad\b/gi, "cat"],
-    [/\bmukulaal\b/gi, "cat"],
-    [/\beey\b/gi, "dog"],
-    [/\bnin\b/gi, "man in stylish suit"],
-    [/\brag\b/gi, "men"],
-    [/\bhaweenay\b/gi, "woman"],
-    [/\bnaag\b/gi, "woman"],
-    [/\bgabar\b/gi, "girl"],
-    [/\bwiil\b/gi, "boy"],
-    [/\bbaabuur\b/gi, "luxury car"],
-    [/\bgaari\b/gi, "car"],
-    [/\bsuudh\b/gi, "suit"],
-    [/\bdhar\b/gi, "clothes"],
-    [/\bmuraayad\b/gi, "sunglasses"],
-    [/\bbad\b/gi, "turquoise ocean with gentle waves"],
-    [/\bbadda\b/gi, "ocean sea"],
-    [/\bbuur\b/gi, "mountain"],
-    [/\bqorrax\b/gi, "sun sunset golden hour"],
-    [/\bdayax\b/gi, "moon glowing"],
-    [/\bhabeen\b/gi, "night sky"],
-    [/\bcasri\b/gi, "futuristic modern"],
-    [/\bqurux\b/gi, "beautiful masterpiece 4k"],
+    [/\bgeel\b/gi, "camel in desert dunes"],
+    [/\bbisad\b/gi, "cute fluffy cat"],
+    [/\bmukulaal\b/gi, "cute fluffy kitten"],
+    [/\beey\b/gi, "golden retriever dog"],
+    [/\bnin\b/gi, "handsome businessman in tailored luxury dark suit"],
+    [/\brag\b/gi, "men in suits"],
+    [/\bhaweenay\b/gi, "elegant woman"],
+    [/\bnaag\b/gi, "elegant woman portrait"],
+    [/\bgabar\b/gi, "young woman portrait"],
+    [/\bwiil\b/gi, "young handsome boy portrait"],
+    [/\bbaabuur\b/gi, "luxury supercar sports car on street"],
+    [/\bgaari\b/gi, "supercar sports car"],
+    [/\bsuudh\b/gi, "luxury tailored business suit"],
+    [/\bdhar\b/gi, "fashion designer clothes"],
+    [/\bmuraayad\b/gi, "stylish sunglasses"],
+    [/\bbad\b/gi, "tropical turquoise ocean with calm waves and coral reef"],
+    [/\bbadda\b/gi, "turquoise ocean sea with waves"],
+    [/\bbuur\b/gi, "epic snow mountain landscape"],
+    [/\bqorrax\b/gi, "golden sunset glowing sky"],
+    [/\bdayax\b/gi, "luminous full moon in starry night"],
+    [/\bhabeen\b/gi, "starry night sky milky way"],
+    [/\bcasri\b/gi, "futuristic scifi cyberpunk"],
+    [/\bqurux\b/gi, "masterpiece ultra realistic 8k photorealistic"],
     [/\bmadow\b/gi, "black"],
     [/\bcad\b/gi, "white"],
-    [/\bcagaar\b/gi, "green"],
-    [/\bbuluug\b/gi, "blue"],
-    [/\bcasaan\b/gi, "red"],
+    [/\bcagaar\b/gi, "lush green"],
+    [/\bbuluug\b/gi, "deep vibrant blue"],
+    [/\bcasaan\b/gi, "vivid red"],
   ];
 
   let result = prompt;
@@ -57,6 +57,41 @@ function translateSomaliPrompt(prompt: string): string {
     result = result.replace(pattern, replacement);
   }
   return result.replace(/\s+/g, " ").trim();
+}
+
+async function fetchRealAiImage(prompt: string): Promise<string | null> {
+  const seed = Math.floor(Math.random() * 900000) + 100000;
+  const models = ["flux", "sdxl"];
+
+  for (const model of models) {
+    try {
+      const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(
+        prompt
+      )}?model=${model}&width=1024&height=1024&seed=${seed}&nologo=true`;
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 20000);
+
+      const res = await fetch(url, { signal: controller.signal });
+      clearTimeout(timeoutId);
+
+      if (res.ok) {
+        const buffer = Buffer.from(await res.arrayBuffer());
+        // Verify it's a real image and not an error banner (error banners are tiny or contain 'limit')
+        if (buffer.length > 20000) {
+          const contentType = res.headers.get("content-type") || "image/jpeg";
+          return `data:${contentType};base64,${buffer.toString("base64")}`;
+        }
+      }
+    } catch (err) {
+      console.warn(`Model ${model} fetch failed, trying next:`, err);
+    }
+  }
+
+  // Fallback to direct flux image URL
+  return `https://image.pollinations.ai/prompt/${encodeURIComponent(
+    prompt
+  )}?model=flux&width=1024&height=1024&seed=${seed}&nologo=true`;
 }
 
 export async function POST(request: NextRequest) {
@@ -69,10 +104,15 @@ export async function POST(request: NextRequest) {
 
     const translated = translateSomaliPrompt(prompt);
     const cleanPrompt = translated || prompt;
-    const seed = Math.floor(Math.random() * 1000000);
-    const outputUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(
-      cleanPrompt
-    )}?width=1024&height=1024&seed=${seed}&nologo=true`;
+
+    const outputUrl = await fetchRealAiImage(cleanPrompt);
+
+    if (!outputUrl) {
+      return NextResponse.json(
+        { error: "Failed to generate image, please try again." },
+        { status: 500 }
+      );
+    }
 
     await saveGeneratedImage(outputUrl, prompt, "generate");
 
